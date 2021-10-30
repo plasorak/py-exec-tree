@@ -21,10 +21,9 @@ states = ["none",
           "starting", "started",
           "pausing", "paused",
           "resuming",
-          "stopping", "stopped",
+          "stopping",
           "scrapping",
-          "terminating",
-          "terminated"]
+          "terminating"]
 
 transitions = [
     {'trigger': 'boot'         , 'source': 'none'        , 'dest': 'booting'     },
@@ -43,7 +42,7 @@ transitions = [
     {'trigger': 'end_stop'     , 'source': 'stopping'    , 'dest': 'configured'  },
     {'trigger': 'scrap'        , 'source': 'configured'  , 'dest': 'scrapping'   },
     {'trigger': 'end_scrap'    , 'source': 'scrapping'   , 'dest': 'initialised' },
-    {'trigger': 'terminate'    , 'source': 'booted'      , 'dest': 'terminating' },
+    {'trigger': 'terminate'    , 'source': 'initialised' , 'dest': 'terminating' },
     {'trigger': 'end_terminate', 'source': 'terminating' , 'dest': 'none'        },
 ]
 
@@ -200,18 +199,22 @@ s1a = DAQApp (name="wibctrl0", parent=s1 )
 s1b = DAQApp (name="wibctrl1", parent=s1 )
 s1c = DAQApp (name="wibctrl2", parent=s1 )
 s1d = DAQApp (name="wibctrl3", parent=s1 )
+
 top.print_status(Console())
-# for cmd in [("boot","booted"),
-#             ("init","initialised"),
-#             ("conf", "configured"),
-#             ("start", "started"),
-#             ("stop", "configured"),
-#             ("scrap", "intialised"),
-#             ("terminate", "none")]:
-#     top.send_command(cmd[0])
-#     while(top.state != cmd[1]):
-#         time.sleep(1)
-#         top.print_status(Console())
-    
-graphs = GraphMachine(model=top)
-top.get_graph().draw('my_state_diagram.png', prog='dot')
+graphs = GraphMachine(model=top, states=states, transitions=transitions, initial="none")
+top.get_graph().draw('my_state_diagram.png', prog='circo')
+print("done drawing")
+
+for cmd in [("boot","booted"),
+            ("init","initialised"),
+            ("conf", "configured"),
+            ("start", "started"),
+            ("stop", "configured"),
+            ("scrap", "intialised"),
+            ("terminate", "none")]:
+    top.send_command(cmd[0])
+    while(top.state != cmd[1]):
+        time.sleep(1)
+        top.print_status(Console())
+
+exit(0)
