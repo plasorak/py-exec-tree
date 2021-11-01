@@ -1,0 +1,51 @@
+{
+    "np04_vst": {
+        "states": ["none",
+                   "booted",
+                   "initialised",
+                   "configured",
+                   "started",
+                   "paused"],
+        "initial" : "none",
+        "state-conf": "optimistic",
+        "transitions": [{"trigger": "boot"     , "source": "none"       , "dest": "booted"     , "conf": "long"},
+                        {"trigger": "init"     , "source": "booted"     , "dest": "initialised"},
+                        {"trigger": "conf"     , "source": "initialised", "dest": "configured" },
+                        {"trigger": "start"    , "source": "configured" , "dest": "started"    , "conf": "short",
+                         "order": ["wibs", "daq"]},
+                        {"trigger": "pause"    , "source": "started"    , "dest": "paused"     , "conf": "short"},
+                        {"trigger": "resume"   , "source": "paused"     , "dest": "resumed"    , "conf": "short"},
+                        {"trigger": "stop"     , "source": "started"    , "dest": "configured" , "conf": "short"},
+                        {"trigger": "scrap"    , "source": "configured" , "dest": "initialised"},
+                        {"trigger": "terminate", "source": "initialised", "dest": "none"       }
+                       ],
+        "transition-conf": "strict",
+        "children": {
+            "wibs": {
+                "include": true,
+                "state-conf": "optimistic",
+                "transitions-conf": "strict,long",
+                "transitions-update": {"trigger": "start", "source": "configured", "dest": "started", "cfg":"short",
+                                       "order": ["wib1",
+                                                 "wib2",
+                                                 "*"]
+                                      },
+                "children": {
+                    "wib1": "wibctrl1",
+                    "wib2": "wibctrl2"
+                }
+            }
+        },
+        "daq": {
+            "include": true,
+            "state-conf": "pessimistic",
+            "transitions-conf": "complaisant,long",
+            "children": {
+                "ru": "ru",
+                "flx": "flx",
+                "trig": "trig",
+                "tpg": "tpg"
+            }
+        }
+    }
+}
