@@ -2,7 +2,6 @@ from anytree import NodeMixin, RenderTree
 import json
 import copy
 from transitions import Machine
-# from core import Machine
 from transitions.extensions import GraphMachine
 import inspect
 from rich.segment import Segment
@@ -17,10 +16,13 @@ import time
 
     
 class FSMConfig():
+    '''
+    A class that holds all the FSM configuration stored on each node
+    '''
     def __init__(self, config_json):
         self.config = config_json
         self.included = None
-        self.initial = None
+        self.initial = None # first state for the FSM
         self.transitions = None
         self.transition_conf = None
         self.states = None
@@ -35,8 +37,10 @@ class FSMConfig():
 
 
 class CommandSender(threading.Thread):
+    '''
+    A class to send command to the node
+    '''
     STOP="RESPONSE_QUEUE_STOP"
-
 
     def __init__(self, node):
         threading.Thread.__init__(self, name=f"command_sender_{node.name}")
@@ -68,10 +72,9 @@ class CommandSender(threading.Thread):
 
     
 class ExecNode(NodeMixin):
-    def set_environment(self, event):
-        self.event = event
-
-
+    '''
+    A node that is just sending commands to its children nodes
+    '''
     def __init__(self, name:str,
                  fsm_config=None, parent=None, children=None, console=None):
         self.console = console
@@ -86,6 +89,8 @@ class ExecNode(NodeMixin):
 
 
     def create_fsms(self):
+        ## Annoyingly, this needs to be called _after_ the callbacks on_enter_blabla have been registered,
+        ## so it can't go in the ctor
         self.fsm = FSMFactory(self, self.fsm_config)
 
         if self.children:
@@ -93,7 +98,15 @@ class ExecNode(NodeMixin):
                 child.create_fsms()
 
 
+    def _set_environment(self, event):
+        ## A callback before the transition is executed
+        ## So that we know which command has been sent in the on_enter_* method
+        self.event = event
+
+
     def quit(self):
+        ## Somehow I can't move this to the __del__?
+        ## I don't know how to delete an anytree properly
         self.console.log(f"Killing me softly... {self.name}")
         self.command_sender.stop()
         for child in self.children:
@@ -101,11 +114,15 @@ class ExecNode(NodeMixin):
 
 
     def notify_on_success(self, command):
+        ## This one is for the quick commands
+        ## TODO merge the 2 methods: _notify_on_success is for the long transitions
         self.last_successful_cmd = command
 
 
     def print_fsm(self, console:Console=None):
+        ## Some helper function on the FSM, to printout what we are allowed to do
 
+        # If we are in between states, bail
         if len(self.state)>4 and self.state[-4:] == "-ing":
             self.console.print(f"Can't send command, node is {self.state}")
             return
@@ -134,6 +151,7 @@ class ExecNode(NodeMixin):
                 else:
                     last=self.last_successful_cmd
 
+                # Highlights the last command that was executed
                 if transitions_in[i]["trigger"] == last:
                     ### Any way to make a better arrow?
                     text += ["[blue]"+transitions_in[i]["source"]+"[/blue]──[[green]"+transitions_in[i]["trigger"]+"[/green]]──>" ]
@@ -156,6 +174,7 @@ class ExecNode(NodeMixin):
 
 
     def print_status(self, console:Console=None):
+        ## Usual status
         table = Table(title=f"apps")
         table.add_column("name", style="blue")
         table.add_column("state", style="magenta")
@@ -176,6 +195,7 @@ class ExecNode(NodeMixin):
         console.print(table)
 
     def is_consistent(self):
+        ## Fills the consistent flag (are my children in the same state as me?)
         for child in self.children:
             if child.fsm_config.included:
                 if not child.is_consistent():
@@ -187,23 +207,30 @@ class ExecNode(NodeMixin):
         return True
 
     def send_command(self, command):
+        ## Use the command_sender to send commands
         self.command_sender.add_command(command)
 
 
 class ExecLeaf(ExecNode):
+    '''
+    A node that is can execute command, it can't have children, these are applications
+    '''
+    
     def __init__(self, name:str, parent=None, fsm_config=None, console=None):
         super().__init__(name=name, parent=parent, fsm_config=fsm_config, console=console)
 
-
     def register_command(self, name, method):
-        # print(f"Registering {name} on the {self.name}")
+        ## A method to register the user's callbacks
         setattr(self, name, method.__get__(self))
 
     def is_consistent(self):
+        ## Since I can't have children, I'm always consistent
         return True
 
 
 def _construct_tree(config:dict, mother, console):
+    ## Typical tree creation recursive function.
+    ## All the leafs (without children) are ExecLeafs
     if not ("children" in config):
         return
 
@@ -218,6 +245,10 @@ def _construct_tree(config:dict, mother, console):
 
 
 def load(config:dict, console):
+    '''
+    Load json string to the full blown tree+fsms
+    '''
+    
     config = json.loads(config)
 
     top = list(config.keys())
@@ -228,6 +259,7 @@ def load(config:dict, console):
     fsm_config = copy.deepcopy(config[top])
     
     if "children" in fsm_config:
+        # chucking the children nodes for the fsm configuration
         del fsm_config["children"]
 
     console.log(f"Creating topnode {top}")
@@ -235,6 +267,8 @@ def load(config:dict, console):
     console.log(f"Constructing tree from {top}")
     _construct_tree(config[top], topnode, console)
 
+
+    # A bit of useful printout for debugging
     for pre, _, node in RenderTree(topnode):
         console.print(f"{pre}{node.name}")
 
@@ -242,60 +276,72 @@ def load(config:dict, console):
 
 
 def loads(in_file:str, console):
+    '''
+    Load json file to the full blown tree+fsms
+    '''
     print(f"Loading {in_file}")
     config = open(in_file, "r").read()
     return load(config, console)
 
 
 def _transition_with_interm(cls, _):
-    trigger = cls.event.event.name
+    '''
+    An internal function that is used in ExecNode, when the transition take some time
+    '''
+    trigger = cls.event.event.name # command name
 
     if len(trigger)>=4 and trigger[0:4] == "end_":
         return
-
-    if not cls.children:
-        return
+    
+    if not cls.children: # "that should never happen"
+        raise RuntimeError(f"{cls.name} doesn't have children to send commands to")
 
     still_to_exec = []
     for child in cls.children:
         cls.console.log(f"{cls.name} is sending '{trigger}' to {child.name}")
+        # Just a quick check that the user has defined the callback, similar to the one in pytransition
+        # Otherwise, the transitions never timeout
         mname = "on_enter_"+trigger+"-ing"
         if not hasattr(child, mname):
             raise RuntimeError(f"{child.name} doesn't have {mname} registered")
         if not inspect.ismethod(getattr(child, mname)):
             raise RuntimeError(f"{child.name} doesn't have {mname} registered")
 
-        still_to_exec.append(child)
-        child.send_command(trigger)
+        ## TODO add order here!!
+        still_to_exec.append(child) # a record of which children still need to finish their task
+        child.send_command(trigger) # send the commands
 
-    timeout=30
+    timeout=30 ## TODO: specify timeout in cfg
     for _ in range(timeout):
         for child in cls.children:
 
             if child in still_to_exec and child.last_successful_cmd == "end_"+trigger:
-                still_to_exec.remove(child)
+                still_to_exec.remove(child) # Bin this child that is done
                 
-        if len(still_to_exec) == 0:
-            break
+        if len(still_to_exec) == 0: # if all done, continue
+            break 
         time.sleep(1)
 
     if len(still_to_exec) > 0:
         cls.console.log(f"Shit hit the fan... {cls.name} can't {trigger} {[child.name for child in still_to_exec]}")
         return
 
+    # Initiate the transition on this node to say that we have finished
     finalisor = getattr(cls, "end_"+trigger, None)
     finalisor()
 
     
 def _transition_no_interm(cls, _):
-    trigger = cls.event.event.name
+    trigger = cls.event.event.name # command name
 
-    if not cls.children:
-        return
+    if not cls.children: # "that should never happen"
+        raise RuntimeError(f"{cls.name} doesn't have children to send commands to")
 
     still_to_exec = []
     for child in cls.children:
         cls.console.log(f"{cls.name} is sending '{trigger}' to {child.name}")
+        ## Pfffff to get the callback name, we need to get the transition's destination...
+        ## Probably better way to do that
         dest=""
         for t in child.fsm_config.transitions:
             if t["trigger"] == trigger:
@@ -304,35 +350,47 @@ def _transition_no_interm(cls, _):
         if dest == "":
             raise RuntimeError(f"No transition found for {trigger} on {child.name}")
         mname = "on_enter_"+dest
+        # Just a quick check that the user has defined the callback, similar to the one in pytransition
+        # Otherwise, the transitions never timeout
         if not hasattr(child, mname):
             raise RuntimeError(f"{child.name} doesn't have {mname} registered")
         if not inspect.ismethod(getattr(child, mname)):
             raise RuntimeError(f"{child.name} doesn't have {mname} registered")
 
-        still_to_exec.append(child)
-        child.send_command(trigger)
+        ## TODO add order here!!
+        still_to_exec.append(child) # a record of which children still need to finish their task
+        child.send_command(trigger) # send the commands
         
-    timeout=30
+    timeout=30  ## TODO: specify timeout in cfg
     for _ in range(timeout):
         for child in cls.children:
             if child in still_to_exec and child.last_successful_cmd == trigger:
-                still_to_exec.remove(child)
-                
+                still_to_exec.remove(child) # Bin this child that is done
+
         if len(still_to_exec) == 0:
             break
-        time.sleep(0.1)
+        time.sleep(0.1) # TODO different from the _transition_with_interm which is a confusing
 
     if len(still_to_exec) > 0:
         cls.console.log(f"Shit hit the fan... {cls.name} can't {trigger} {[child.name for child in still_to_exec]}")
         return
-    cls.notify_on_success(trigger)
+
+    ## Direclty notify
+    cls._notify_on_success(trigger)
 
 def _notify_on_success(cls, _):
+    '''
+    This one is a automated callback for the long transitions
+    '''
     trigger = cls.event.event.name
     cls.last_successful_cmd = trigger
 
 
 def FSMFactory(model, config=None):
+    '''
+    Construct an FSM from the config and the parent
+    '''
+    
     my_states = []
     my_state_conf = ''
     my_transitions = []
@@ -350,13 +408,14 @@ def FSMFactory(model, config=None):
             long_transitions = "long" in config.transition_conf
 
         if config.transitions:
+            # we need to loop over transitions, because if they are long, new states are added
             my_transitions = config.transitions
             for transition in my_transitions:
                 name = transition["trigger"]+"-ing"
-
+                
                 if long_transitions or transition.get("conf") == "long":
                     transition_state_to_add.append(name)
-
+                    # add these new states
                     long_transition_to_add.append({
                         "trigger":transition["trigger"],
                         "source": transition["source"],
@@ -369,6 +428,7 @@ def FSMFactory(model, config=None):
                         "dest": transition["dest"]
                     })
                     states_after_long_transition.append(transition["dest"])
+                    # ... and remove the old direct transitions
                     long_transition_to_remove.append(transition)
 
         if config.states:
@@ -387,6 +447,7 @@ def FSMFactory(model, config=None):
     parent_initial = ""
 
     if model.parent:
+        # now we do evertything again but with the parent node's FSM
         parent_config = model.parent.fsm_config
         if parent_config:
             parent_states = parent_config.states
@@ -399,7 +460,7 @@ def FSMFactory(model, config=None):
 
             for transition in parent_transitions:
                 name = transition["trigger"]+"-ing"
-
+                # ... more of the same
                 if long_transitions or transition.get("conf") == "long":
                     transition_state_to_add.append(name)
 
@@ -419,7 +480,7 @@ def FSMFactory(model, config=None):
                     long_transition_to_remove.append(transition)
             parent_initial = parent_config.initial
 
-    ### Merging
+    ## Smart merging... most of this could be done with dict.update?
     if len(my_states) == 0:
         my_states = parent_states + transition_state_to_add
         config.states = parent_states
@@ -427,25 +488,30 @@ def FSMFactory(model, config=None):
         my_states += transition_state_to_add
 
     for state in my_states:
+        # incredibly ugly code that is meant to:
         if not isinstance(model, ExecLeaf):
             if len(state)>=4 and state[-4:]=="-ing":
+                # use the correct callback on the execnode
                 function_name = 'on_enter_'+state
                 setattr(model, function_name, _transition_with_interm.__get__(model))
             elif not state in states_after_long_transition:
+                # ... depending if it's long or short
                 function_name = 'on_enter_'+state
                 setattr(model, function_name, _transition_no_interm.__get__(model))
 
         if len(state)>=4 and state[-4:]=="-ing":
+            # .. and  with the automated exit 
             function_name = 'on_exit_'+state
             setattr(model, function_name, _notify_on_success.__get__(model))
 
-    if my_initial == "":
+    if my_initial == "": # declaring a initial state
         my_initial = my_states[0]
         config.initial = my_initial
 
-
+    # Finally the macchinetta, after that model (i.e. the node) becomes an FSM (with only states)
     machine = Machine(model=model, states=my_states, initial=my_initial, auto_transitions=False, send_event=True)
 
+    ## now we can add our transitions
     transition_to_include = []
     if config:
         if config.transitions:
@@ -460,6 +526,7 @@ def FSMFactory(model, config=None):
 
     for transition in transition_to_include:
         if transition in long_transition_to_remove: continue
-        machine.add_transition(transition["trigger"], transition["source"], transition["dest"], before="set_environment")
+        machine.add_transition(transition["trigger"], transition["source"], transition["dest"], before="_set_environment")
 
+    # And we return the machine, although I'm not sure we actually need to
     return machine
