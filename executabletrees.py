@@ -376,7 +376,7 @@ def _transition_no_interm(cls, _):
         return
 
     ## Direclty notify
-    cls._notify_on_success(trigger)
+    cls.notify_on_success(trigger)
 
 def _notify_on_success(cls, _):
     '''
