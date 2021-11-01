@@ -14,6 +14,7 @@ import threading
 from queue import Queue
 import threading as th
 import time
+
     
 class FSMConfig():
     def __init__(self, config_json):
@@ -31,6 +32,7 @@ class FSMConfig():
         self.transition_conf = config_json.get("transition-conf")
         self.states = config_json.get("states")
         self.state_conf = config_json.get("state-conf")
+
 
 class CommandSender(threading.Thread):
     STOP="RESPONSE_QUEUE_STOP"
@@ -90,14 +92,17 @@ class ExecNode(NodeMixin):
             for child in self.children:
                 child.create_fsms()
 
+
     def quit(self):
         self.console.log(f"Killing me softly... {self.name}")
         self.command_sender.stop()
         for child in self.children:
             child.quit()
 
+
     def notify_on_success(self, command):
         self.last_successful_cmd = command
+
 
     def print_fsm(self, console:Console=None):
 
@@ -124,24 +129,24 @@ class ExecNode(NodeMixin):
         for i in range(n_lines):
             text = []
             if i<n_t_in:
-                ### Any way to make a better arrow?
                 if self.last_successful_cmd and len(self.last_successful_cmd)>4 and self.last_successful_cmd[:4]=="end_":
                     last=self.last_successful_cmd[4:]
                 else:
                     last=self.last_successful_cmd
-                
+
                 if transitions_in[i]["trigger"] == last:
+                    ### Any way to make a better arrow?
                     text += ["[blue]"+transitions_in[i]["source"]+"[/blue]──[[green]"+transitions_in[i]["trigger"]+"[/green]]──>" ]
                 else:
                     text += ["[blue]"+transitions_in[i]["source"]+"[/blue]──\["+transitions_in[i]["trigger"]+"]──>" ]
             else: 
                 text += ["", ""]
-                
+
             if i+1==int((n_lines+1)/2):
                 text += ["[magenta]"+now_state+"[/magenta]"]
             else:
                 text += [""]
-            
+
             if i<n_t_out:
                 text += ["──\["+transitions_out[i]["trigger"]+"]──>[blue]"+transitions_out[i]["dest"]+"[/blue]"]
             else: 
@@ -175,7 +180,7 @@ class ExecNode(NodeMixin):
             if child.fsm_config.included:
                 if not child.is_consistent():
                     return False
-            
+
                 if self.state != child.state:
                     return False
 
@@ -193,7 +198,7 @@ class ExecLeaf(ExecNode):
     def register_command(self, name, method):
         # print(f"Registering {name} on the {self.name}")
         setattr(self, name, method.__get__(self))
-        
+
     def is_consistent(self):
         return True
 
@@ -201,7 +206,7 @@ class ExecLeaf(ExecNode):
 def _construct_tree(config:dict, mother, console):
     if not ("children" in config):
         return
-    
+
     for child_name, value in config["children"].items():
         if isinstance(value, dict):
             child = ExecNode(name=child_name, parent=mother, fsm_config=value, console=console)
@@ -219,15 +224,17 @@ def load(config:dict, console):
     if len(top)!= 1:
         raise RuntimeError("JSon should have exactly 1 key")
     top=top[0]
-    
+
     fsm_config = copy.deepcopy(config[top])
     
     if "children" in fsm_config:
         del fsm_config["children"]
+
     console.log(f"Creating topnode {top}")
     topnode = ExecNode(name=top, fsm_config=config[top], console=console)
     console.log(f"Constructing tree from {top}")
     _construct_tree(config[top], topnode, console)
+
     for pre, _, node in RenderTree(topnode):
         console.print(f"{pre}{node.name}")
 
@@ -242,13 +249,13 @@ def loads(in_file:str, console):
 
 def _transition_with_interm(cls, _):
     trigger = cls.event.event.name
-    
+
     if len(trigger)>=4 and trigger[0:4] == "end_":
         return
-    
+
     if not cls.children:
         return
-    
+
     still_to_exec = []
     for child in cls.children:
         cls.console.log(f"{cls.name} is sending '{trigger}' to {child.name}")
@@ -257,16 +264,15 @@ def _transition_with_interm(cls, _):
             raise RuntimeError(f"{child.name} doesn't have {mname} registered")
         if not inspect.ismethod(getattr(child, mname)):
             raise RuntimeError(f"{child.name} doesn't have {mname} registered")
-            
+
         still_to_exec.append(child)
         child.send_command(trigger)
-        
+
     timeout=30
     for _ in range(timeout):
         for child in cls.children:
-            
+
             if child in still_to_exec and child.last_successful_cmd == "end_"+trigger:
-                
                 still_to_exec.remove(child)
                 
         if len(still_to_exec) == 0:
@@ -276,17 +282,17 @@ def _transition_with_interm(cls, _):
     if len(still_to_exec) > 0:
         cls.console.log(f"Shit hit the fan... {cls.name} can't {trigger} {[child.name for child in still_to_exec]}")
         return
-    
+
     finalisor = getattr(cls, "end_"+trigger, None)
     finalisor()
+
     
 def _transition_no_interm(cls, _):
     trigger = cls.event.event.name
-    # print(f"{cls.name} Trigger was {trigger}")
-    
+
     if not cls.children:
         return
-    
+
     still_to_exec = []
     for child in cls.children:
         cls.console.log(f"{cls.name} is sending '{trigger}' to {child.name}")
@@ -302,19 +308,14 @@ def _transition_no_interm(cls, _):
             raise RuntimeError(f"{child.name} doesn't have {mname} registered")
         if not inspect.ismethod(getattr(child, mname)):
             raise RuntimeError(f"{child.name} doesn't have {mname} registered")
-            
 
         still_to_exec.append(child)
         child.send_command(trigger)
         
     timeout=30
     for _ in range(timeout):
-        # print(f"Still to exec on {cls.name}: {len(still_to_exec)} processes")
         for child in cls.children:
-            
-            # print(f"Child: {child.name} thinks {child.last_successful_cmd} is his last successful cmd, last sent cmd {trigger}")
             if child in still_to_exec and child.last_successful_cmd == trigger:
-                # print(f"Chuking {child.name} from the waiting list.")
                 still_to_exec.remove(child)
                 
         if len(still_to_exec) == 0:
@@ -338,12 +339,12 @@ def FSMFactory(model, config=None):
     my_transition_conf = ''
     my_initial = ''
     my_included = None
-    
+
     transition_state_to_add = []
     long_transition_to_add = []
     long_transition_to_remove = []
     states_after_long_transition = []
-    
+
     if config:
         if config.transition_conf:
             long_transitions = "long" in config.transition_conf
@@ -355,13 +356,13 @@ def FSMFactory(model, config=None):
 
                 if long_transitions or transition.get("conf") == "long":
                     transition_state_to_add.append(name)
-                    
+
                     long_transition_to_add.append({
                         "trigger":transition["trigger"],
                         "source": transition["source"],
                         "dest": name
                     })
-                    
+
                     long_transition_to_add.append({
                         "trigger":"end_"+transition["trigger"],
                         "source": name,
@@ -372,49 +373,48 @@ def FSMFactory(model, config=None):
 
         if config.states:
             my_states = config.states
-            
+
         if config.state_conf:
             my_state_conf = config.state_conf
 
         if config.initial:
             my_initial = config.initial
-            
+
     parent_states = []
     parent_state_conf = ''
     parent_transitions = []
     parent_transition_conf = ''
     parent_initial = ""
-    
+
     if model.parent:
-        # print(f"Inheriting config from {model.parent.name}")
         parent_config = model.parent.fsm_config
         if parent_config:
             parent_states = parent_config.states
             parent_state_conf = parent_config.state_conf
             parent_transitions = parent_config.transitions
             parent_transition_conf = parent_config.transition_conf
-            
+
             if parent_transition_conf:
                 long_transitions = "long" in parent_transition_conf
-            
+
             for transition in parent_transitions:
                 name = transition["trigger"]+"-ing"
 
                 if long_transitions or transition.get("conf") == "long":
                     transition_state_to_add.append(name)
-                    
+
                     long_transition_to_add.append({
                         "trigger":transition["trigger"],
                         "source": transition["source"],
                         "dest": name
                     })
-                    
+
                     long_transition_to_add.append({
                         "trigger":"end_"+transition["trigger"],
                         "source": name,
                         "dest": transition["dest"]
                     })
-                    
+
                     states_after_long_transition.append(transition["dest"])
                     long_transition_to_remove.append(transition)
             parent_initial = parent_config.initial
@@ -434,7 +434,7 @@ def FSMFactory(model, config=None):
             elif not state in states_after_long_transition:
                 function_name = 'on_enter_'+state
                 setattr(model, function_name, _transition_no_interm.__get__(model))
-                
+
         if len(state)>=4 and state[-4:]=="-ing":
             function_name = 'on_exit_'+state
             setattr(model, function_name, _notify_on_success.__get__(model))
@@ -444,25 +444,22 @@ def FSMFactory(model, config=None):
         config.initial = my_initial
 
 
-    # print(f"Node {model.name} will have states: {my_states}, initial state: {my_initial}")
     machine = Machine(model=model, states=my_states, initial=my_initial, auto_transitions=False, send_event=True)
-    # print(f"Node {model.name} state: {model.state}")
 
     transition_to_include = []
     if config:
         if config.transitions:
             transition_to_include = config.transitions+long_transition_to_add
-            
+
     if not config.transition_conf:
         config.transition_conf = parent_config.transition_conf
-        
+
     if len(transition_to_include) == 0:
         transition_to_include = model.parent.fsm_config.transitions+long_transition_to_add
         config.transitions = model.parent.fsm_config.transitions
-        
+
     for transition in transition_to_include:
         if transition in long_transition_to_remove: continue
-        # print(f"Adding transition {transition['trigger']} on {model.name}")
         machine.add_transition(transition["trigger"], transition["source"], transition["dest"], before="set_environment")
 
     return machine
