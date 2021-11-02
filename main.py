@@ -39,18 +39,48 @@ def boot_wib(cls, _):
 
 def init_wib(cls, _):
     '''
+    This is an example of a long transition
+    We need to end the state
+    '''
+    print(f"{cls.name} responding to cmd {cls.event.event.name} (but state is already {cls.state}), this is going to be fast")
+    # print(f"Finish up booting {cls.name}, now state is {cls.state}")
+    cls.end_init()
+    return
+
+def conf_wib(cls, _):
+    '''
     This is an example of a short transition
     We just need to notify
     '''
     print(f"{cls.name} responding to cmd {cls.event.event.name} (but state is already {cls.state}), this is going to be fast")
     # print(f"Finish up booting {cls.name}, now state is {cls.state}")
-    cls.notify_on_success("init")
+    cls.end_conf()
+    return
+
+def start_wib(cls, _):
+    '''
+    This is an example of a short transition
+    We just need to notify
+    '''
+    print(f"{cls.name} responding to cmd {cls.event.event.name} (but state is already {cls.state}), this is going to be fast")
+    # print(f"Finish up booting {cls.name}, now state is {cls.state}")
+    cls.notify_on_success("start")
     return
 
 for wibnode in wibnodes: # Now we register
     # wibnode.register_command("on_enter_booted", boot_wib)
     wibnode.register_command("on_enter_boot-ing", booting_wib)
-    wibnode.register_command("on_enter_initialised", init_wib)
+    wibnode.register_command("on_enter_init-ing", init_wib   )
+    wibnode.register_command("on_enter_conf-ing", conf_wib   )
+    wibnode.register_command("on_enter_started" , start_wib  )
+
+class dfgdsfgad:
+    def on_enter_boot(self):
+        asdfsdfg
+
+
+Machine(model: fddsa, )
+fddsa.boot()
 # AFTER we register, we create the fsm on the tree
 exectree.create_fsms()
 exectree.print_status(c)
@@ -60,6 +90,12 @@ exectree.send_command("boot")
 time.sleep(10)
 exectree.print_fsm(c)
 exectree.send_command("init")
+time.sleep(2)
+exectree.print_fsm(c)
+exectree.send_command("conf")
+time.sleep(2)
+exectree.print_fsm(c)
+exectree.send_command("start")
 time.sleep(2)
 exectree.print_fsm(c)
 exectree.quit()

@@ -218,7 +218,7 @@ class ExecLeaf(ExecNode):
     
     def __init__(self, name:str, parent=None, fsm_config=None, console=None):
         super().__init__(name=name, parent=parent, fsm_config=fsm_config, console=console)
-
+        
     def register_command(self, name, method):
         ## A method to register the user's callbacks
         setattr(self, name, method.__get__(self))
@@ -411,6 +411,9 @@ def FSMFactory(model, config=None):
             # we need to loop over transitions, because if they are long, new states are added
             my_transitions = config.transitions
             for transition in my_transitions:
+                if transition.get("conf") == "short":
+                    continue
+                
                 name = transition["trigger"]+"-ing"
                 
                 if long_transitions or transition.get("conf") == "long":
@@ -493,10 +496,12 @@ def FSMFactory(model, config=None):
             if len(state)>=4 and state[-4:]=="-ing":
                 # use the correct callback on the execnode
                 function_name = 'on_enter_'+state
+                print(f"{function_name} now in {model.name}")
                 setattr(model, function_name, _transition_with_interm.__get__(model))
             elif not state in states_after_long_transition:
                 # ... depending if it's long or short
                 function_name = 'on_enter_'+state
+                print(f"{function_name} now in {model.name}")
                 setattr(model, function_name, _transition_no_interm.__get__(model))
 
         if len(state)>=4 and state[-4:]=="-ing":
