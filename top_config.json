@@ -31,8 +31,7 @@
                                                  "*"]
                                       },
                 "children": {
-                    "wib1": "wibctrl1",
-                    "wib2": "wibctrl2"
+                    "wib1": "wibctrl1"
                 }
             }
         },
