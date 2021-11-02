@@ -1,0 +1,29 @@
+{
+    "np04_vst": {
+        "states": ["none",
+                   "booted",
+                   "initialised",
+                   "configured",
+                   "started",
+                   "paused"],
+        "transitions": [{"trigger": "boot"     , "source": "none"       , "dest": "booted"     },
+                        {"trigger": "init"     , "source": "booted"     , "dest": "initialised"},
+                        {"trigger": "conf"     , "source": "initialised", "dest": "configured" },
+                        {"trigger": "start"    , "source": "configured" , "dest": "started"    },
+                        {"trigger": "pause"    , "source": "started"    , "dest": "paused"     },
+                        {"trigger": "resume"   , "source": "paused"     , "dest": "resumed"    },
+                        {"trigger": "stop"     , "source": "started"    , "dest": "configured" },
+                        {"trigger": "scrap"    , "source": "configured" , "dest": "initialised"},
+                        {"trigger": "terminate", "source": "initialised", "dest": "none"       }
+                       ],
+        "children": {
+            "wibs": {
+                "children": {
+                    "wib1": "wibctrl1",
+                    "wib2": "wibctrl1",
+                    "wib3": "wibctrl1"
+                }
+            }
+        }
+    }
+}
