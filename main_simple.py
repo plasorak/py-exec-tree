@@ -26,7 +26,7 @@ class WIBNode(ET.ExecLeaf):
     
     def user_on_enter_boot_ing(self):
         print("Sane WIBNode user code!")
-        time.sleep(1)
+        time.sleep(2)
         print("Sane WIBNode user code DONE!")
 
 class WIBBuggyNode(ET.ExecLeaf):
@@ -48,7 +48,7 @@ class WIBSlowNode(ET.ExecLeaf):
     
     def user_on_enter_boot_ing(self):
         print("Slow WIBNode user code!")
-        time.sleep(300)
+        time.sleep(20)
         raise RuntimeError("whatnot")
         print("Slow WIBNode user code DONE!")
 
@@ -69,8 +69,8 @@ exectree.print_status(c)
 exectree.print_fsm(c)
 # sending commands... 
 exectree.send_command("boot")
-for _ in range(30):
-    time.sleep(0.4)
+for _ in range(60):
+    time.sleep(1)
     exectree.print_status(c)
 # exectree.send_command("init")
 time.sleep(10)
@@ -82,7 +82,11 @@ exectree.print_status(c)
 # exectree.send_command("start")
 # time.sleep(2)
 # exectree.print_fsm(c)
+for thread in threading.enumerate(): 
+    print(thread.name)
 exectree.quit()
+for thread in threading.enumerate(): 
+    print(thread.name)
 # time.sleep(2)
 # exectree.send_command("conf")
 # time.sleep(2)
