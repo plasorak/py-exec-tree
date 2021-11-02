@@ -1,5 +1,7 @@
 from anytree import NodeMixin, RenderTree
+import traceback
 import json
+from rich.json import JSON
 import copy
 from transitions import Machine
 from transitions.extensions import GraphMachine
@@ -41,7 +43,7 @@ class CommandSender(threading.Thread):
     def add_command(self, cmd):
         self.queue.put(cmd)
 
-
+        
     def run(self):
         while True:
             command = self.queue.get()
@@ -81,16 +83,22 @@ class ExecNode(NodeMixin):
         try:
             self.fsm_config = FSMConfig(fsm_config) if fsm_config else FSMConfig(parent.fsm_config.config_json)
         except Exception as e:
-            print(f"Config error: {fsm_config}")
             raise KeyError(f"{self.name} hasn't been specified a proper configuration for FSM (need states and transitions)") from e
 
 
     def create_fsms(self):
         self.fsm = FSMFactory(self, self.fsm_config)
-        print("Create_fsms on "+self.name)
         if self.children:
             for child in self.children:
                 child.create_fsms()
+
+
+    def on_enter_error(self, eventdata):
+        message = eventdata.args[0]
+        if not self.parent:
+            # Wayyy to lazy to extract the stack trace from that,
+            # but that could be done
+            self.console.print(JSON(message))
 
 
     def _set_environment(self, event):
@@ -166,19 +174,18 @@ class ExecNode(NodeMixin):
         ## Usual status
         table = Table(title=f"apps")
         table.add_column("name", style="blue")
-        table.add_column("state", style="magenta")
-        table.add_column("consistent")
-        table.add_column("included", style="magenta")
+        table.add_column("state", style="green")
 
         for pre, _, node in RenderTree(self):
-            state = node.state if node.state[-4:] != "_ing" else "[yellow]"+node.state+"[/yellow]"
-            error = "yes" if node.is_consistent() else "[red]no[/red]"
-            included = "yes" if node.fsm_config.included else "no"
+            state = node.state 
+            if len(state)>3 and state[-4:] == "_ing":
+                state= "[yellow]"+state+"[/yellow]"
+            elif state == "error":
+                state= "[red bold]"+state+"[/red bold]"
+                
             table.add_row(
                 pre+node.name,
-                state,
-                error,
-                included
+                state
             )
 
         console.print(table)
@@ -269,7 +276,6 @@ def loads(in_file:str, console):
     '''
     Load json file to the full blown tree+fsms
     '''
-    print(f"Loading {in_file}")
     config = open(in_file, "r").read()
     return load(config, console)
 
@@ -299,46 +305,58 @@ def _transition_with_interm(cls, _):
     for _ in range(timeout):
         if not cls.status_receiver_queue.empty():
             m = cls.status_receiver_queue.get()
-            print(f"{cls.name} from queue: {m}")
             response = json.loads(m)
     
             for child in cls.children:
                 if response["node"] == child.name:
-
                     still_to_exec.remove(child)
                     
                     if response["status"] != "success":
                         failed.append(response)
                     break
 
-        if len(still_to_exec) == 0: # if all done, continue
-            break 
+        if len(still_to_exec) == 0 or len(failed)>0: # if all done, continue
+            break
         time.sleep(1)
 
     timeout = []
     if len(still_to_exec) > 0:
         cls.console.log(f"Sh*t the f*n... {cls.name} can't {trigger} {[child.name for child in still_to_exec]}")
         timeout = still_to_exec
+        for node in timeout:
+            d = {
+                "state": cls.state,
+                "trigger": cls.event.event.name,
+                "node": node.name,
+                "failed": "",
+                "status": "Timed out after waiting for too long, or because a sibling went on error",
+            }
+            node.to_error(json.dumps(d))
 
     if len(failed) > 0:
         for fail in failed:
-            cls.console.log(f"Sh*t the f*n... {fail['node']} threw an error {fail['trigger']}: {fail['status']}")
+            cls.console.log(f"Sh*t the f*n... {fail['node']} threw an error {fail['trigger']}")
 
     status = "success"
     if len(timeout)>0:
         status = "timeout"
     if len(failed)>0:
         status = "failed"
-
-    text = json.dumps({
+        
+    d = {
         "state": cls.state,
         "trigger": cls.event.event.name,
         "node": cls.name,
         "timeout": ",".join([c.name for c in timeout]),
         "failed": failed,
         "status": status,
-    })
-    print(f"{cls.name} sending {text} to end_{cls.event.event.name}")
+    }
+    text = json.dumps(d)
+
+    if status != "success":
+        cls.to_error(text)
+        return
+    
     # Initiate the transition on this node to say that we have finished
     finalisor = getattr(cls, "end_"+cls.event.event.name, None)
     finalisor(text)
@@ -346,7 +364,6 @@ def _transition_with_interm(cls, _):
 
 def _on_enter(cls, _):
     user_code = getattr(cls, "user_on_enter_"+cls.state, None)
-    finish_up = getattr(cls, "end_"+cls.event.event.name, None)
     
     if not user_code:
         raise RuntimeError(f"You need to define user_on_enter_{cls.state}!")
@@ -354,24 +371,46 @@ def _on_enter(cls, _):
     try:
         user_code()
     except Exception as e:
+        stack = traceback.format_exc()
         text = json.dumps({
             "status": "error running user code",
             "node": cls.name,
             "state": cls.state,
             "trigger": cls.event.event.name,
+            "exception": str(e),
+            "stack": stack
         })
-        ## Hummmm where do we go if the transition failed??
-        if cls.parent:
-            cls.parent.status_receiver_queue.put(text)
+        ### ARGGGG what if the node is already in a error?
+        ## This isn't a transition anymore...
+        ## Print it here, otherwise it gets lost
+        cls.console.print(JSON(text))
+        ## ... put the node in error anyway
+        cls.to_error(text)
         return
+    
     text = json.dumps({
         "status": "success",
         "node": cls.name,
         "state": cls.state,
         "trigger": cls.event.event.name,
     })
-    print(f"{cls.name} sending {text} to end_{cls.event.event.name}")
-    finish_up(text)
+    
+    finish_up = getattr(cls, "end_"+cls.event.event.name, None)
+
+    try:
+        finish_up(text)
+    except Exception as e:
+        text = json.dumps({
+            "status": "Couldn't terminate command \""+cls.event.event.name+"\" the node probably was on error state",
+            "node": cls.name,
+            "exception": str(e),
+            "state": cls.state,
+            "trigger": cls.event.event.name,
+        })
+        ## Same story here
+        cls.console.print(JSON(text))
+        cls.to_error(text)
+        
 
 
 def _on_exit(cls, eventdata):
@@ -379,7 +418,6 @@ def _on_exit(cls, eventdata):
     This one is an automated callback
     '''
     message = eventdata.args[0]
-    print(f"{cls.name} _on_exit_{cls.state} (trigger: {eventdata.event.name}) answer: {type(message)}: \"{message}\"")
     if cls.parent:
         cls.parent.status_receiver_queue.put(message)
 
@@ -414,7 +452,7 @@ def FSMFactory(model, config=None):
         long_transition_to_remove.append(transition)
 
     ## Smart merging... most of this could be done with dict.update?
-    states = config.states + transition_state_to_add
+    states = config.states + transition_state_to_add + ["error"]
 
     for state in states:
         if len(state)<4 or state[-4:]!="_ing":
@@ -424,12 +462,10 @@ def FSMFactory(model, config=None):
         if isinstance(model, ExecLeaf):
             # use the correct callback on the execleaf
             function_name = 'on_enter_'+state
-            print(f"{function_name} now in {model.name} from the on_enter_")
             setattr(model, function_name, _on_enter.__get__(model))
         elif isinstance(model, ExecNode):
             # use the correct callback on the execnode
             function_name = 'on_enter_'+state
-            print(f"{function_name} now in {model.name} from the transition template")
             setattr(model, function_name, _transition_with_interm.__get__(model))
             
 
@@ -440,7 +476,7 @@ def FSMFactory(model, config=None):
     initial = states[0]
 
     # Finally the macchinetta, after that model (i.e. the node) becomes an FSM (with only states)
-    machine = Machine(model=model, states=states, initial=initial, auto_transitions=False, send_event=True)
+    machine = Machine(model=model, states=states, initial=initial, auto_transitions=True, send_event=True)
 
     ## now we can add our transitions
     transition_to_include = config.transitions+long_transition_to_add
